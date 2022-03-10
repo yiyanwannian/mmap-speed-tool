@@ -32,6 +32,8 @@ var (
 	testDataPath = "./data"
 )
 
+type walFunc func(args ...interface{}) (lwsf.WalFile, error)
+
 func init() {
 	for i := 0; i < 512; i++ {
 		valueNKB = valueNKB + value1024
@@ -45,8 +47,6 @@ func init() {
 		valueNMB = valueNMB + valueMB
 	}
 }
-
-type walFunc func(args ...interface{}) (lwsf.WalFile, error)
 
 func main() {
 	map_size := 1 << 30
@@ -143,7 +143,7 @@ func filefnf(dataSize int) string {
 		" ", "", -1))
 }
 
-func mmaptestf(dataT string, testFunc walFunc, args ...interface{}) {
+func mmaptestf(dataT string, testFunc walFunc, args ...interface{}) time.Duration {
 	fileSize := 1 << 30
 	f, err := testFunc(args...)
 	err = f.Truncate(int64(fileSize))
@@ -157,14 +157,21 @@ func mmaptestf(dataT string, testFunc walFunc, args ...interface{}) {
 		f.Sync()
 	}
 	f.Close()
-	end := time.Since(start)
-	fmt.Println(fmt.Sprintf("fileName: %s dataSize: %s, time used: %d ms",
-		args[0].(string), humanize.Bytes(uint64(len(dataT))), end.Milliseconds()))
+	stop := time.Since(start)
+	//fmt.Println(fmt.Sprintf("fileName: %s dataSize: %s, time used: %d ms",
+	//	args[0].(string), humanize.Bytes(uint64(len(dataT))), stop.Milliseconds()))
+	return stop
 }
 
 func testDo(dataT string, mapSize int) {
-	mmaptestf(dataT, mmapf, mmapfnf(len(dataT)), mapSize)
-	mmaptestf(dataT, filef, filefnf(len(dataT)))
+	mmapTime := mmaptestf(dataT, mmapf, mmapfnf(len(dataT)), mapSize)
+	fileTime := mmaptestf(dataT, filef, filefnf(len(dataT)))
+	choose := "mmap"
+	if mmapTime >= fileTime {
+		choose = "file"
+	}
+	fmt.Println(fmt.Sprintf("dataSize: %s, time used(mmap: %d, file: %d)ms, choose: %s",
+		humanize.Bytes(uint64(len(dataT))), mmapTime.Milliseconds(), fileTime.Milliseconds(), choose))
 }
 
 func mkdatadir(path string) error {
