@@ -1,14 +1,21 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
 	lwsf "chainmaker.org/chainmaker/lws/file"
 	"github.com/dustin/go-humanize"
+)
+
+var (
+	sizeList  string
+	writeTime *uint
 )
 
 var (
@@ -35,6 +42,8 @@ var (
 type walFunc func(args ...interface{}) (lwsf.WalFile, error)
 
 func init() {
+	flagInit()
+
 	for i := 0; i < 512; i++ {
 		valueNKB = valueNKB + value1024
 	}
@@ -48,73 +57,37 @@ func init() {
 	}
 }
 
+func flagInit() {
+	flag.StringVar(&sizeList, "sizeList", "1",
+		"input test data size, you can input multi size (MB) with ',' split, sp: 1,10,20")
+
+	writeTime = flag.Uint("writeTime", 1, "input data times for test")
+}
+
 func main() {
-	map_size := 1 << 30
+	flag.Parse()
+	mapSize := 1 << 30
 	if err := mkdatadir(testDataPath); err != nil {
 		panic(err)
 	}
 
-	testDo(value1024, map_size) // 1KB
-
-	value512KB := ""
-	for i := 0; i < 512; i++ {
-		value512KB = value512KB + value1024
+	if len(sizeList) == 0 {
+		panic("empty sizeList")
 	}
-	testDo(valueNKB, map_size) // 512KB
 
-	value1MB := ""
-	for i := 0; i < 1024; i++ {
-		value1MB = value1MB + value1024
+	sizeStrs := strings.Split(sizeList, ",")
+	sizeUList := make([]int, 0, len(sizeStrs))
+	for _, v := range sizeStrs {
+		if vu, err := strconv.Atoi(v); err != nil {
+			panic(fmt.Sprintf("invalidate size string: %s", v))
+		} else {
+			sizeUList = append(sizeUList, vu)
+		}
 	}
-	testDo(value1MB, map_size) // 1MB
 
-	value2MB := ""
-	for i := 0; i < 2; i++ {
-		value2MB = value2MB + valueMB
+	for _, sz := range sizeUList {
+		runFunc(sz, mapSize, *writeTime)
 	}
-	testDo(value2MB, map_size) // 2MB
-
-	value10MB := ""
-	for i := 0; i < 10; i++ {
-		value10MB = value10MB + valueMB
-	}
-	testDo(value10MB, map_size) // 10MB
-
-	value20MB := ""
-	for i := 0; i < 20; i++ {
-		value20MB = value20MB + valueMB
-	}
-	testDo(value20MB, map_size) // 20MB
-
-	value30MB := ""
-	for i := 0; i < 30; i++ {
-		value30MB = value30MB + valueMB
-	}
-	testDo(value30MB, map_size) // 30MB
-
-	value50MB := ""
-	for i := 0; i < 50; i++ {
-		value50MB = value50MB + valueMB
-	}
-	testDo(value50MB, map_size) // 50MB
-
-	value100MB := ""
-	for i := 0; i < 100; i++ {
-		value100MB = value100MB + valueMB
-	}
-	testDo(value100MB, map_size) // 100MB
-
-	value150MB := ""
-	for i := 0; i < 150; i++ {
-		value150MB = value150MB + valueMB
-	}
-	testDo(value150MB, map_size) // 150MB
-
-	value200MB := ""
-	for i := 0; i < 200; i++ {
-		value200MB = value200MB + valueMB
-	}
-	testDo(value200MB, map_size) // 200MB
 }
 
 func mmapf(args ...interface{}) (lwsf.WalFile, error) {
@@ -143,7 +116,7 @@ func filefnf(dataSize int) string {
 		" ", "", -1))
 }
 
-func mmaptestf(dataT string, testFunc walFunc, args ...interface{}) time.Duration {
+func mmaptestf(dataT string, writeTimes uint, testFunc walFunc, args ...interface{}) time.Duration {
 	fileSize := 1 << 30
 	f, err := testFunc(args...)
 	err = f.Truncate(int64(fileSize))
@@ -152,26 +125,27 @@ func mmaptestf(dataT string, testFunc walFunc, args ...interface{}) time.Duratio
 	}
 	data := []byte(dataT)
 	start := time.Now()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < int(writeTimes); i++ {
 		f.Write(data)
 		f.Sync()
 	}
 	f.Close()
-	stop := time.Since(start)
-	//fmt.Println(fmt.Sprintf("fileName: %s dataSize: %s, time used: %d ms",
-	//	args[0].(string), humanize.Bytes(uint64(len(dataT))), stop.Milliseconds()))
-	return stop
+	return time.Since(start)
 }
 
-func testDo(dataT string, mapSize int) {
-	mmapTime := mmaptestf(dataT, mmapf, mmapfnf(len(dataT)), mapSize)
-	fileTime := mmaptestf(dataT, filef, filefnf(len(dataT)))
+func runFunc(dataSizeMB, mapSize int, writeTimes uint) {
+	dataNMB := ""
+	for i := 0; i < dataSizeMB; i++ {
+		dataNMB = dataNMB + valueMB
+	}
+	mmapTime := mmaptestf(dataNMB, writeTimes, mmapf, mmapfnf(len(dataNMB)), mapSize)
+	fileTime := mmaptestf(dataNMB, writeTimes, filef, filefnf(len(dataNMB)))
 	choose := "mmap"
 	if mmapTime >= fileTime {
 		choose = "file"
 	}
-	fmt.Println(fmt.Sprintf("dataSize: %s, time used(mmap: %d, file: %d)ms, choose: %s",
-		humanize.Bytes(uint64(len(dataT))), mmapTime.Milliseconds(), fileTime.Milliseconds(), choose))
+	fmt.Println(fmt.Sprintf("dataSize: %s, writeTime: %d, time used(mmap: %d, file: %d)ms, choose: %s",
+		humanize.Bytes(uint64(len(dataNMB))), writeTimes, mmapTime.Milliseconds(), fileTime.Milliseconds(), choose))
 }
 
 func mkdatadir(path string) error {
